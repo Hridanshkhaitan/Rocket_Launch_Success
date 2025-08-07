@@ -1,0 +1,350 @@
+# STA302 Final Project Part 3 Code
+
+The process of creating our final model for STA302 Final Project
+
+```{r}
+Sys.setenv(RSTUDIO_PANDOC = "C:/Program Files/RStudio/bin/quarto/bin/tools/")
+# Load necessary libraries
+install.packages("conflicted")
+library(conflicted)
+
+install.packages("tidyverse")
+library(tidyverse)
+```
+
+## Recreating Preliminary Model
+
+Our first step is to recreate our preliminary model we created in part 1
+
+```{r}
+# Read the CSV files with correct column names
+data <- read_csv("./part3/part3_data.csv")
+
+# Check columns
+names(data)
+
+# Clean the data by removing problematic rows
+# problems_cleaned <- problems(cleaned_data)
+# problems_part_one <- problems(part_one_data)
+# cleaned_data <- cleaned_data %>% dplyr::filter(!row_number() %in% problems_cleaned$row)
+# part_one_data <- part_one_data %>% dplyr::filter(!row_number() %in% problems_part_one$row)#
+
+# Check the structure of the merged data
+str(data)
+
+# Summary of predictors
+summary(data %>% select(Year, Price, SuccessRate, RocketYear))
+
+# Ensure predictors are factors with more than one level
+# And make sure numeric variables are properly set as numeric
+data <- data %>%
+  mutate(
+    Year = as.numeric(Year),
+    LaunchVehicle = as.factor(LaunchVehicle),
+    SuccessRate = as.numeric(SuccessRate),
+    Price = as.numeric(Price),
+    LaunchSite = as.factor(LaunchSite),
+    State = as.factor(State),
+    Class = as.factor(Class),
+    RocketYear = as.numeric(RocketYear),
+    LaunchTimes = as.numeric(LaunchTimes),
+    MeanTemp = as.numeric(MeanTemp),
+    MaxWind = as.numeric(MaxWind)
+  )
+
+# Fit a preliminary linear model
+model <- lm(SuccessRate ~ Year + Price + MeanTemp + MaxWind + LaunchedHistory + LaunchTimes + RocketYear + Class + State + LaunchSite, data = data)
+```
+
+Compared to our model in part 1, we scraped more data, and cleaned our existing data into part3_data.csv
+We also fixed some of the data handling and variables, in part one, our model was interperting some categories, such as MeanTemp, as strings instead of numerical values
+
+## Evaluate model and check assumptions
+
+We check if our model satisfies all the linear regression assumptions. We will test them using the residual plots of launch success against our 5 predictors.
+
+-   Normality is tested using the Q-Q residuals plot, and we look for deviations and outliers in our trend.
+
+-   Independence is tested using the residuals vs. fitted plot, and we look for any deviations in the trend of the residuals away from zero.
+
+-   For linearity, we check the RSS. If RSS is close to 1, then we don't violate linearity.
+
+-   Finally, we test for homoscedasticity using the residuals vs. fitted plot as well. We look for a random scatter of residuals around zero for homoscedasticity.
+
+```{r}
+# Check Linearity: Residuals vs. Fitted plot
+plot(model, which = 1)
+
+# Check Normality: Q-Q plot
+plot(model, which = 2)
+
+
+# Standardized residuals vs fitted values=
+plot(rstandard(model) ~ fitted(model), main = "Standardized Residuals vs Fitted Values", xlab = "Fitted Values", ylab = "Standardized Residuals")
+```
+
+The same code, but we save each plot to a png file
+```{r}
+# Load necessary libraries
+library(ggplot2)
+
+# Check Linearity: Residuals vs. Fitted plot
+png("part3/plots/residuals_vs_fitted.png")
+plot(model, which = 1)
+dev.off()
+
+# Check Normality: Q-Q plot
+png("part3/plots/qq_plot.png")
+plot(model, which = 2)
+dev.off()
+
+# Histogram of residuals
+png("part3/plots/histogram_residuals.png")
+hist(residuals(model), main = "Histogram of Residuals", xlab = "Residuals", col = "lightblue", border = "black")
+dev.off()
+
+# Standardized residuals vs fitted values
+png("part3/plots/standardized_residuals_vs_fitted.png")
+plot(rstandard(model) ~ fitted(model), main = "Standardized Residuals vs Fitted Values", xlab = "Fitted Values", ylab = "Standardized Residuals")
+abline(h = 0, col = "red")
+dev.off()
+```
+
+At this point, we begin to run into issues with our model, our plots indicator our variables have issues with linearity and variance
+
+## Refine model
+
+Despite issues with the model, we run hypothesis testing, ANOVA, and Partial F-Tests and try to determine which variables to drop
+
+### Hypothesis Testing
+
+We check the p-values of our variables, and decide which ones to drop If p-values > 0.05 for any variables in the model, drop them
+
+```{r}
+# Summary of the model
+summary(model)
+```
+
+We use the result from summary, to determine which variables to drop
+
+### Conduct Hypothesis Testing & Calculate Confidence Intervals
+We conduct hypothesis tests on the coefficients to determine its level of significance of each predictor.
+```{r}
+# Doing hypothesis tests
+# Extract coefficients and standard errors
+coeff <- coef(summary(model))
+beta <- coeff[, "Estimate"]
+se <- coeff[, "Std. Error"]
+t_value <- beta / se
+
+# Degrees of freedom
+df <- df.residual(model)
+
+# Calculate p-values
+p_values <- 2 * pt(-abs(t_value), df = df)
+
+# Flag significant predictors
+significance <- ifelse(p_values < 0.05, "Significant", "Not Significant")
+data.frame(Coefficient = rownames(coeff), Estimate = beta, p_value = p_values, Significance = significance)
+```
+
+Then, we calculate confidence intervals for coefficients to assess the precision of our estimates. Additionally, we generate prediction intervals for new observations.
+```{r}
+# Calculating confidence intervals for our model
+confint(model, level = 0.95)
+```
+
+### Conducting ANOVA & Partial F-Tests
+We conduct an ANOVA test to determine if our model is significant. We also conduct partial F tests to determine if our predictors are significant.
+```{r}
+# ANOVA test
+anova(model)
+
+# Partial F tests
+# Extract the sum of squares for each predictor
+ss <- anova(model)$"Sum Sq"
+
+# Calculate partial F tests
+partial_f <- ss / sum(ss)
+data.frame(Predictor = rownames(anova(model)), Partial_F = partial_f)
+```
+
+
+## Issues with model
+Our model at this point, appears to have big issues with following our assumptions
+
+### Trying to reduce model, various transformations, and rerunning tests above to see if we can 
+```{r}
+# Trying different transformations
+data <- data %>%
+  mutate(
+    LogPrice = log(Price + 1),
+    LogYear = log(Year + 1),
+    LogLaunchedHistory = log(LaunchedHistory + 1),
+    LogLaunchTimes = log(LaunchTimes + 1),
+    LogMaxWind = log(MaxWind + 1),
+    ExpPrice = exp(Price),
+    ExpYear = exp(Year),
+    ExpLaunchTimes = exp(LaunchTimes),
+    ExpMeanTemp = exp(MeanTemp),
+    ExpMaxWind = exp(MaxWind),
+  ) # Add 1 to avoid issues with log(0)
+
+# Trying interactions
+data <- data %>%
+  mutate(
+    Interaction1 = LaunchVehicle:LaunchSite,
+    Interaction5 = Class:LaunchSite
+  )
+
+
+# Fit a linear model
+model <- lm(SuccessRate ~ Year + Price + MeanTemp + Interaction1 + Interaction5 + Class + LaunchSite, data = data)
+```
+
+### Box Cox Transformation
+We try to conduct a Box Cox transformation to determine if our model can be improved by transforming our response variable.
+
+```{r}
+library(MASS)
+
+# Shift the SuccessRate to make all values positive
+print(paste("Minimum value of SuccessRate:", min(data$SuccessRate)))
+min_value <- min(data$SuccessRate)
+shift_constant <- abs(min_value) + 1
+data$SuccessRate_shifted <- data$SuccessRate + shift_constant
+
+# Apply the Box-Cox transformation
+boxcox_result <- boxcox(SuccessRate_shifted ~ ., data = data)
+
+# Find the optimal lambda value
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+print(paste("Optimal lambda:", lambda))
+
+# Apply the transformation
+data$SuccessRate_transformed <- (data$SuccessRate_shifted^lambda - 1) / lambda
+
+# Plot the transformed data to check for normality
+hist(data$SuccessRate_transformed, main = "Histogram of Transformed SuccessRate", xlab = "Transformed SuccessRate")
+
+# Fit a linear model with the transformed response variable
+model_transformed <- lm(SuccessRate_transformed ~ Year + Price + MeanTemp + MaxWind + LaunchedHistory + LaunchTimes + RocketYear + Class + State + LaunchSite, data = data)
+
+# Check the residuals of the transformed model
+hist(residuals(model_transformed), main = "Histogram of Residuals of Transformed Model", xlab = "Residuals", col = "lightblue", border = "black")
+
+# Check Linearity: Residuals vs. Fitted plot
+plot(model_transformed, which = 1)
+
+# Check Normality: Q-Q plot
+plot(model_transformed, which = 2)
+
+# Standardized residuals vs fitted values
+plot(rstandard(model_transformed) ~ fitted(model_transformed), main = "Standardized Residuals vs Fitted Values of Transformed Model", xlab = "Fitted Values", ylab = "Standardized Residuals")
+
+# Summary of the transformed model
+summary(model_transformed)
+
+# Conduct hypothesis tests on the coefficients of the transformed model
+coeff_transformed <- coef(summary(model_transformed))
+
+# Extract coefficients and standard errors
+beta_transformed <- coeff_transformed[, "Estimate"]
+
+# Extract standard errors
+se_transformed <- coeff_transformed[, "Std. Error"]
+
+# Calculate t-values
+t_value_transformed <- beta_transformed / se_transformed
+
+# Degrees of freedom
+df_transformed <- df.residual(model_transformed)
+
+# Calculate p-values
+p_values_transformed <- 2 * pt(-abs(t_value_transformed), df = df_transformed)
+```
+
+Results are inconclusive, and the transformed model isn't a big improvement compared to our current model
+
+## Creating Final Model
+
+Our final model, although still not passing many of our tests, is our best attempt at creating a model with our data, mitigating the issues above as best we can 
+
+
+```{r}
+# Fit a linear model
+model <- lm(SuccessRate ~ Year + Price + MeanTemp + Interaction5 + Class + LaunchSite, data = data)
+
+# Attempting to filter some bad data
+# Calculate standardized residuals
+data$residuals <- rstandard(model)
+
+# Identify outliers on the left side (values < -2)
+outliers_left <- which(data$residuals < -1)
+# View indices of outliers
+print(outliers_left)
+
+# Remove outliers on the left side
+data_filtered <- data[-outliers_left, ]
+
+# Shift the SuccessRate to make all values positive
+print(paste("Minimum value of SuccessRate:", min(data$SuccessRate)))
+min_value <- min(data$SuccessRate)
+shift_constant <- abs(min_value) + 1
+data$SuccessRate_shifted <- data$SuccessRate + shift_constant
+
+# Apply the Box-Cox transformation
+boxcox_result <- boxcox(SuccessRate_shifted ~ ., data = data)
+
+# Find the optimal lambda value
+lambda <- boxcox_result$x[which.max(boxcox_result$y)]
+print(paste("Optimal lambda:", lambda))
+
+# Apply the transformation
+data$SuccessRate_transformed <- (data$SuccessRate_shifted^lambda - 1) / lambda
+
+# Fit our final linear model with filtered data
+model <- lm(SuccessRate_transformed ~ Year + Price + MeanTemp + Interaction1 + Interaction5 + Class + LaunchSite, data = data_filtered)
+
+# Check model again
+summary(model)
+
+# Check Linearity: Residuals vs. Fitted plot
+plot(model, which = 1)
+
+# Check Normality: Q-Q plot
+plot(model, which = 2)
+
+# save to png
+png("part3/plots/final_residuals_vs_fitted.png")
+plot(model, which = 1)
+dev.off()
+
+png("part3/plots/final_qq_plot.png")
+plot(model, which = 2)
+dev.off()
+
+# Histogram of residuals
+png("part3/plots/final_histogram_residuals.png")
+hist(residuals(model), main = "Histogram of Residuals", xlab = "Residuals", col = "lightblue", border = "black")
+dev.off()
+
+# Standardized residuals vs fitted values
+png("part3/plots/final_standardized_residuals_vs_fitted.png")
+plot(rstandard(model) ~ fitted(model), main = "Standardized Residuals vs Fitted Values", xlab = "Fitted Values", ylab = "Standardized Residuals")
+abline(h = 0, col = "red")
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
